@@ -242,3 +242,11 @@ def square(x):
     )
     return y
 ```
+
+![image](https://github.com/JeanJulesBigeard/cuda-mode/assets/48935007/249eed2e-5f63-4ec7-be0d-2e02ecef7ec0)
+
+It is also possible to debug Triton code with this:
+```
+triton.jit(interpret=True)
+Almost everything is a WrappedTensor so inspect variables with var_name.tensor
+```
