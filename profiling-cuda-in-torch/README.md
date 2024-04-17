@@ -250,3 +250,9 @@ It is also possible to debug Triton code with this:
 triton.jit(interpret=True)
 Almost everything is a WrappedTensor so inspect variables with var_name.tensor
 ```
+
+#### Profiling using ncu:
+
+![image](https://github.com/JeanJulesBigeard/cuda-mode/assets/48935007/10ead32f-f2e7-48dd-9f84-21a224d6a71f)
+![image](https://github.com/JeanJulesBigeard/cuda-mode/assets/48935007/9c2a1629-edb9-49c7-b0d4-6b264c56b2d1)
+![image](https://github.com/JeanJulesBigeard/cuda-mode/assets/48935007/6c7c7d55-839d-4adf-a942-11fec1300969)
