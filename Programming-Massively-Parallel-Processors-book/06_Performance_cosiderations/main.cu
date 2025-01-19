@@ -37,15 +37,16 @@
  *************************************************************/
 __global__ void matrixMulKernel(float *M, float *N, float *P, int width) {
   // ----------------------------------------------------------
-  // Create shared memory (tile) to hold sub-blocks of M and N
+  // Create shared memory (tile) to hold sub-blocks of M and N.
+  // Each tile is TILE_WIDTH x TILE_WIDTH elements.
   // ----------------------------------------------------------
   __shared__ float Mds[TILE_WIDTH][TILE_WIDTH];
   __shared__ float Nds[TILE_WIDTH][TILE_WIDTH];
 
   // ----------------------------------------------------------
-  // Each block is responsible for a TILE_WIDTH x TILE_WIDTH
-  // region of the output matrix. bx, by identify which block
-  // we are in. tx, ty identify which thread inside the block.
+  // Identify the block and thread within that block.
+  // bx, by: Block indices in X, Y directions
+  // tx, ty: Thread indices within the block
   // ----------------------------------------------------------
   int bx = blockIdx.x;
   int by = blockIdx.y;
@@ -53,18 +54,19 @@ __global__ void matrixMulKernel(float *M, float *N, float *P, int width) {
   int ty = threadIdx.y;
 
   // ----------------------------------------------------------
-  // Calculate the row in the output matrix that this thread
-  // will produce partial sums for, and the first column within
-  // that row. Because we are unrolling in the column dimension
-  // by COARSE_FACTOR, each thread will ultimately calculate
-  // COARSE_FACTOR partial products in the same row.
+  // Calculate the output row this thread will handle, and
+  // the first output column (colstart) for the unrolled columns.
+  // row = the absolute row in the output matrix
+  // colstart = the first column in the output matrix this
+  //            thread will handle before moving by TILE_WIDTH
+  //            steps for unrolling.
   // ----------------------------------------------------------
   int row = by * TILE_WIDTH + ty;
-  int colstart = bx * TILE_WIDTH + tx; // first column this thread handles
+  int colstart = bx * TILE_WIDTH + tx; // first column for this thread
 
   // ----------------------------------------------------------
-  // We will accumulate partial sums into this array, one for
-  // each unrolled column. Initialize them to 0.
+  // We will accumulate partial sums for COARSE_FACTOR columns.
+  // Initialize them to 0.
   // ----------------------------------------------------------
   float Pvalue[COARSE_FACTOR];
   for (int c = 0; c < COARSE_FACTOR; ++c) {
@@ -72,62 +74,74 @@ __global__ void matrixMulKernel(float *M, float *N, float *P, int width) {
   }
 
   // ----------------------------------------------------------
-  // Loop over all sub-tiles that cover the width of the matrix
-  // Each sub-tile has size TILE_WIDTH in dimension. "ph" is
-  // the tile index along the dimension of the matrix.
+  // The tiled multiplication is divided into phases (ph).
+  // We need width / TILE_WIDTH phases to cover the entire row
+  // dimension of M (and corresponding column dimension of N).
   // ----------------------------------------------------------
   for (int ph = 0; ph < width / TILE_WIDTH; ++ph) {
     // ------------------------------------------------------
-    // Load the tile of M that corresponds to the row we are
-    // responsible for, and the sub-tile 'ph'. All threads
-    // in the block cooperatively load data into Mds.
+    // Load a tile of M: Mds[ty][tx] <- M[row, ph*TILE_WIDTH + tx]
+    //
+    //  - Because 'row' is constant for all threads in the same
+    //    horizontal slice of the block, and 'tx' ranges from 0
+    //    to TILE_WIDTH-1, threads in the same warp/block read
+    //    consecutive elements in M's row.
+    //  - This pattern ensures "coalesced" memory access for M
+    //    because consecutive threads read consecutive floats.
     // ------------------------------------------------------
     if (row < width) {
       Mds[ty][tx] = M[row * width + (ph * TILE_WIDTH + tx)];
     }
-    __syncthreads(); // Make sure Mds is fully loaded before proceeding
+    __syncthreads(); // Ensure all M elements are loaded before proceeding
 
     // ------------------------------------------------------
-    // Unroll the multiplication over the column dimension
-    // by COARSE_FACTOR. Each iteration c computes one chunk
-    // of the output for a different column.
+    // Within each phase, we unroll the multiplication over
+    // COARSE_FACTOR columns. Each iteration 'c' handles one
+    // chunk (TILE_WIDTH columns apart in the final matrix).
     // ------------------------------------------------------
     for (int c = 0; c < COARSE_FACTOR; ++c) {
-      // ----------------------------------------------
-      // The column in the output for the c-th unrolled
-      // iteration. We jump by TILE_WIDTH each time.
-      // ----------------------------------------------
+      // --------------------------------------------------
+      // The actual column index for this part of unrolling
+      // is colstart + c*TILE_WIDTH.
+      // --------------------------------------------------
       int col = colstart + c * TILE_WIDTH;
 
-      // ----------------------------------------------
-      // Load the corresponding tile of N. Notice that
-      // we offset by 'ph * TILE_WIDTH' in the row and
-      // by 'col' in the column to get the correct sub-tile
-      // of N. All threads in block cooperatively load.
-      // ----------------------------------------------
+      // --------------------------------------------------
+      // Load a tile of N: Nds[ty][tx] <- N[ph*TILE_WIDTH+ty, col]
+      //
+      //  - Here, 'ph*TILE_WIDTH + ty' represents the row in N.
+      //  - 'col' is the column in N we are focusing on for
+      //    this unrolled iteration.
+      //  - Because 'ty' ranges from 0 to TILE_WIDTH-1 (for
+      //    threads across the block in the Y direction), the
+      //    addresses accessed are consecutive for each warp
+      //    if 'col' is fixed. This ensures coalesced accesses
+      //    for N as well.
+      // --------------------------------------------------
       if (col < width) {
         Nds[ty][tx] = N[(ph * TILE_WIDTH + ty) * width + col];
       }
-      __syncthreads(); // Ensure Nds is fully loaded
+      __syncthreads(); // Ensure N is fully loaded in shared memory
 
-      // ----------------------------------------------
-      // Perform the actual multiply-add for the tile.
-      // We iterate across the k dimension from 0 to
-      // TILE_WIDTH - 1. We use data in Mds and Nds
-      // that were cooperatively loaded.
-      // ----------------------------------------------
+      // --------------------------------------------------
+      // Multiply-accumulate with the data in shared memory.
+      // We iterate over the k dimension from 0..TILE_WIDTH-1
+      // for the sub-tile. We add the product of Mds[row][k]
+      // and Nds[k][col] to the partial sum Pvalue[c].
+      // --------------------------------------------------
       if (row < width && col < width) {
         for (int k = 0; k < TILE_WIDTH; ++k) {
           Pvalue[c] += Mds[ty][k] * Nds[k][tx];
         }
       }
-      __syncthreads(); // Make sure we finish all math before next iteration
+      __syncthreads(); // Wait for all threads to finish before next iteration
     }
   }
 
   // ----------------------------------------------------------
-  // After accumulating all partial sums, write them back to
-  // the output matrix P for each unrolled column index.
+  // After we've processed all the tiles for M and N, store
+  // the computed partial sums (Pvalue[c]) to the output matrix.
+  // Each thread writes COARSE_FACTOR columns in the same row.
   // ----------------------------------------------------------
   for (int c = 0; c < COARSE_FACTOR; ++c) {
     int col = colstart + c * TILE_WIDTH;
@@ -161,7 +175,7 @@ int main() {
 
   // --------------------------------------------
   // 2. Allocate host memory for matrices
-  //    We have M, N as inputs and P as output
+  //    M, N as inputs, P as output
   // --------------------------------------------
   size_t size = width * width * sizeof(float);
   float *h_M = (float *)malloc(size);
