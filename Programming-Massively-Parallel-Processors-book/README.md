@@ -55,3 +55,15 @@ The chapter emphasizes the importance of memory access efficiency in achieving g
 The chapter explains how to reduce memory traffic by using tiling, a technique that involves dividing data into blocks and processing them collaboratively by the threads within the same block.
 
 It explains how to use shared memory to efficiently share data between the threads of a block.
+
+### Chapter 6: Performance Considerations
+
+Memory Coalescing: This concept is crucial for improving the efficiency of global memory accesses. The chapter explains how memory accesses can be combined into a single access when threads within the same warp access adjacent memory locations. The analogy of carpooling is used to illustrate this: when multiple threads access nearby data, they can "carpool" to make a single request to the DRAM memory, reducing overall memory traffic. Coalesced memory access is essential for maximizing global memory bandwidth. The chapter also demonstrates how to reorganize data access or use shared memory to achieve coalesced access, even when the initial access pattern is unfavorable.
+
+Hiding Memory Latency: Latency is the delay between a memory read/write request and its completion. The chapter explains how the DRAM memory architecture, with its multiple banks and channels, allows data to be transferred in parallel. Interleaving data distribution across different banks and channels in DRAM improves the utilization of data transfer bandwidth. The chapter emphasizes that maximizing thread occupancy on the SM (Streaming Multiprocessor) is crucial to tolerate long latency operations and ensure that enough memory requests are generated to fully utilize memory bandwidth.
+
+Thread Coarsening: The chapter explores the concept of thread coarsening, where multiple parallel work units are assigned to the same thread to reduce the overhead associated with parallelism. This technique involves serializing certain parts of the work, reducing the number of threads and synchronization overhead. The chapter emphasizes that there are trade-offs between increasing the workload of a thread and reducing the overhead of parallelization. Coarsening is applied in different contexts to reduce redundant loading of input data.
+
+Checklist of Optimizations: The chapter provides a list of common optimizations, serving as a reference for the rest of the book. This list includes optimizing thread occupancy, using coalesced accesses to global memory, caching, data privatization, and thread coarsening.
+
+Knowing Your Computation's Bottleneck: The chapter emphasizes the need to understand the bottleneck of a computation to target optimization efforts effectively.
