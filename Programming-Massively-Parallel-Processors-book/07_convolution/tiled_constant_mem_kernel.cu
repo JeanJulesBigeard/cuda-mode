@@ -100,14 +100,12 @@ int main() {
   // Copy the result back to host memory
   cudaMemcpy(h_P, d_P, bytes, cudaMemcpyDeviceToHost);
 
-  // Print the output matrix.
-  std::cout << "Output Matrix:" << std::endl;
-  for (int row = 0; row < height; row++) {
-    for (int col = 0; col < width; col++) {
-      std::cout << h_P[row * width + col] << " ";
-    }
-    std::cout << std::endl;
+  // Print a few output values for verification.
+  std::cout << "Sample output values:" << std::endl;
+  for (int i = 0; i < 10; ++i) {
+    std::cout << h_P[i] << " ";
   }
+  std::cout << std::endl;
 
   // Free device memory
   cudaFree(d_N);
